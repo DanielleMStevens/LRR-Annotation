@@ -1,4 +1,4 @@
-from common import *
+from .common import *
 
 def compromise(a, b):
 	"""Given a pair of n-dimensional vectors `a`, `b`, this function

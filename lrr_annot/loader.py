@@ -1,4 +1,4 @@
-from common import *
+from .common import *
 
 """Loads batches of PBD files from disk, extracts backbones, stores them
 in a dictionary, labeled by filename. 

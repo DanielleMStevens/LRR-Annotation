@@ -1,4 +1,4 @@
-from common import *
+from .common import *
 
 class Plotter:
     def __init__(self):
