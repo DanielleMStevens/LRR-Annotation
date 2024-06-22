@@ -47,20 +47,23 @@ class Loader:
 			chain = next(parser.get_structure(key, path).get_chains())
 			self.structures[prefix + key] = np.array([np.array(list(residue["CA"].get_vector())) for residue in chain.get_residues()])	
 
-	def cache(self, directory, filename):
+	def cache(self, directory, prefix = ''):
 		"""Caches imported structure to directory
 
 		Args:
 			directory (str): Directory to save cache to
-			filename (str): Name of cached export
+			prefix (str): Name of cached export. Defaults to ''.
 		"""
-		pass
+		with open(os.path.join(directory, prefix + 'structures.pickle'), 'wb') as handle:
+			pickle.dump(self.structures, handle, protocol = pickle.HIGHEST_PROTOCOL)
 
-	def retrieve(self, directory, filename):
+	def retrieve(self, directory, prefix = ''):
 		"""Retrieves cached structure data
 
 		Args:
 			directory (str): Directory to retrieve cache from
-			filename (str): Name of cached import dictionary
+			prefix (str): Name of cached import dictionary. Defaults to ''.
 		"""
-		pass
+		with open(os.path.join(directory, prefix + 'structures.pickle'), 'rb') as handle:
+			self.structures.update(pickle.load(handle))
+			
