@@ -9,43 +9,42 @@ from scipy.ndimage import gaussian_filter1d, gaussian_filter
 
 from scipy import linalg, sparse, stats
 
-
 import matplotlib.pyplot as plt
 
-def make_dir(*argv):
-    mydir = path.join(*argv)    
-    if not path.exists(mydir):        
-        if len(argv) > 1:
-            make_dir(*argv[:-1])            
-        os.mkdir(mydir)
-    return mydir
+# def make_dir(*argv):
+#     mydir = path.join(*argv)    
+#     if not path.exists(mydir):        
+#         if len(argv) > 1:
+#             make_dir(*argv[:-1])            
+#         os.mkdir(mydir)
+#     return mydir
 
-def make_path(*argv):
-    mypath = path.join(*argv)
-    if not path.exists(dirname(mypath)):
-        make_dir(*argv[:-1])
-    return mypath
+# def make_path(*argv):
+#     mypath = path.join(*argv)
+#     if not path.exists(dirname(mypath)):
+#         make_dir(*argv[:-1])
+#     return mypath
 
-#retrieve all files in a directory with a given extension
-def get_files_with_ext(directory, ext):
-    file_list = []
-    for file in os.listdir(directory):
-        if file.endswith(ext):
-            file_list.append(file)
-    return file_list
+# # retrieve all files in a directory with a given extension
+# def get_files_with_ext(directory, ext):
+#     file_list = []
+#     for file in os.listdir(directory):
+#         if file.endswith(ext):
+#             file_list.append(file)
+#     return file_list
 
-#return alpha carbon space curve from pdb file
-def get_backbone_from_pdb(path):    
-    parser = PDBParser()
-    chain = next(parser.get_structure('', path).get_chains())
-    return np.array([np.array(list(residue["CA"].get_vector())) for residue in chain.get_residues()])
+# # return alpha carbon space curve from pdb file
+# def get_backbone_from_pdb(path):    
+#     parser = PDBParser()
+#     chain = next(parser.get_structure('', path).get_chains())
+#     return np.array([np.array(list(residue["CA"].get_vector())) for residue in chain.get_residues()])
 
-#given two vectors a and b find orthonormal vectors closest to a and b with the same span
-def compromise(a, b):
-    X = np.array([a,b])
-    u, s, vh = np.linalg.svd(X, full_matrices=False)
-    Y = u @ vh
-    return [*Y]
+# # given two vectors a and b find orthonormal vectors closest to a and b with the same span
+# def compromise(a, b):
+#     X = np.array([a,b])
+#     u, s, vh = np.linalg.svd(X, full_matrices=False)
+#     Y = u @ vh
+#     return [*Y]
 
 #helper function for loss function
 def get_premidpost(winding, params, slope):
@@ -61,12 +60,12 @@ def get_premidpost(winding, params, slope):
         post -= np.mean(post)    
     return pre, mid, post
 
-#compute loss for piecewise linear regression
+# compute loss for piecewise linear regression
 def loss(winding, params, slope, penalties):
     pre, mid, post = get_premidpost(winding, params,slope)
     return penalties[0] * np.sum(pre ** 2) + penalties[1] * np.sum(mid ** 2) + penalties[0] * np.sum(post ** 2)
 
-#given backbone curve return framing of normal bundle
+# given backbone curve return framing of normal bundle
 def get_frame(preX):
     X = gaussian_filter(preX, [1, 0]) # smoothed out curve
     dX = gaussian_filter(X, [1, 0], order = 1) # tangent of backbone
