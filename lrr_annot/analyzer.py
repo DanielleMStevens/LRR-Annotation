@@ -86,7 +86,8 @@ def multi_loss(winding, params, slope, penalties):
 	breakpoints = [0] + list(params.astype('int')) + [len(winding)]
 
 	for i, (a, b) in enumerate(zip(breakpoints[:-1], breakpoints[1:])):
-		cost += penalties[i % 2] * np.sum((winding[a:b] - np.mean(winding[a:b])) ** 2)
+		linear = (i % 2) * slope * (np.arange(a, b) - (a + b - 1) / 2)
+		cost += penalties[i % 2] * np.sum((winding[a:b] - linear - np.mean(winding[a:b])) ** 2)
 
 	return cost
 
