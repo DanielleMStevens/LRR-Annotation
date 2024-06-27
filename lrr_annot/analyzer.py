@@ -54,6 +54,18 @@ def median_slope(data, small = 150, big = 250):
 	return a + (np.argmax(scores) / n_bins) * (b - a), scores
 
 def loss(winding, params, slope, penalties):
+	"""Computes loss associated with a particular piecewise-linear
+	regression of `winding`.
+
+	Args:
+		winding (_type_): Cumulative winding number (signal to be regressed)
+		params (_type_): Breakpoint locations
+		slope (_type_): Slope inferred by median-secant-line computation
+		penalties (_type_): Weights allowed deviations in the coiling and non-coiling regions
+
+	Returns:
+		float: Loss value
+	"""
 	l, r = params
 	l = int(l)
 	r = int(r)
@@ -69,6 +81,15 @@ def loss(winding, params, slope, penalties):
 
 	return penalties[0] * np.sum(pre ** 2) + penalties[1] * np.sum(mid ** 2) + penalties[0] * np.sum(post ** 2)
 
+def multi_loss(winding, params, slope, penalties):
+	cost = 0
+	breakpoints = [0] + list(params.astype('int')) + [len(winding)]
+
+	for i, (a, b) in enumerate(zip(breakpoints[:-1], breakpoints[1:])):
+		cost += penalties[i % 2] * np.sum((winding[a:b] - np.mean(winding[a:b])) ** 2)
+
+	return cost
+
 class Analyzer:
 	def __init__(self):
 		self.structures = {}
@@ -78,6 +99,7 @@ class Analyzer:
 		self.windings = {}
 		self.slopes = {}
 		self.regressions = {}
+		self.losses = {}
 
 	def load_structures(self, structures):
 		"""Updates internal dictionary of three-dimensional protein structures,
@@ -88,7 +110,7 @@ class Analyzer:
 		"""
 		self.structures.update(structures)
 
-	def compute_windings(self, smoothing = 20):
+	def compute_windings(self, smoothing = 20, progress = True):
 		"""Computes the normal bundle framing and cumulative winding number
 		for each protein structure stored in the `structures` dictionary.
 		The backbone, normal bundle, "flattened" curve (projection to the
@@ -100,9 +122,8 @@ class Analyzer:
 			smoothing (int, optional): Amount of smoothing to apply when computing the
 			backbone curve. Defaults to 20.
 		"""
-		for key, structure in self.structures.items():
+		for key, structure in (tqdm(self.structures.items(), desc = 'Computing windings') if progress else self.structures.items()):
 			X = gaussian_filter(structure, [1, 0]) # smoothed out structure
-			dX = gaussian_filter(X, [1, 0], order = 1) # tangent of structure
 			Y = gaussian_filter(X, [smoothing, 0]) # backbone
 			dY = gaussian_filter(Y, [1, 0], order = 1) # tangent of backbone
 			dZ = dY / np.sqrt(np.sum(dY ** 2, axis = 1))[:, np.newaxis] # normalized tangent
@@ -119,22 +140,17 @@ class Analyzer:
 				V[i] -= np.outer(V[i] @ z, z)
 				V[i] = compromise(*V[i])
 
-			Q = np.zeros((len(dZ), 4))
-			for i in range(len(Q)):
-				Q[i] = [(X[i] - Y[i]) @ V[i,0], (X[i] - Y[i]) @ V[i,1], \
-	    				(X[i] - Y[i]) @ dZ[i], dX[i] @ dZ[i]]
-				
-			s, c, q, dx = Q.T
+			s = np.array([x @ v for x, v in zip(X - Y, V[:,0,:])])
+			c = np.array([x @ w for x, w in zip(X - Y, V[:,1,:])])
 
 			# differentiate the appropriate variables
 			ds = gaussian_filter(s, 1, order = 1)
 			dc = gaussian_filter(c, 1, order = 1)
-			dq = gaussian_filter(q, 1, order = 1)
-			r2 = s ** 2 + c ** 2
 
 			# compute discrete integral
-			summand = (c * ds - s * dc) / r2
-			winding = np.cumsum(summand) / (2 * np.pi)
+			# summand = (c * ds - s * dc) / r2
+			winding = np.cumsum((c * ds - s * dc) / (s ** 2 + c ** 2)) / (2 * np.pi)
+			# winding = np.cumsum(summand) / (2 * np.pi)
 			winding *= np.sign(winding[-1] - winding[0])
 
 			self.backbones[key] = Y
@@ -142,7 +158,7 @@ class Analyzer:
 			self.flattened[key] = np.array([s, c])
 			self.windings[key] = winding
 
-	def compute_regressions(self, penalties = [1, 1.5], learning_rate = 0.01, iterations = 10000):
+	def compute_regressions(self, breakpoints = 2, penalties = [1, 1.5], learning_rate = 0.01, iterations = 10000, progress = True):
 		"""Computes piecewise-linear regressions (constant - slope = m - constant) over
 		all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
 		of these regressions to the `parameters` and `slopes` dictionaries.
@@ -154,26 +170,32 @@ class Analyzer:
 			learning_rate (float, optional): Scalar for gradient descent in parameter optimization. Defaults to 0.01.
 			iterations (int, optional): Iterations of gradient descent. Defaults to 10000.
 		"""
-		for key, winding in self.windings.items():
+		for key, winding in (tqdm(self.windings.items(), desc = 'Computing regressions') if progress else self.windings.items()):
 			n = len(winding)
 
-			parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
-			gradient = np.zeros(2)
-			delta = [*np.identity(2)]
+			# best-guess initialization
+			parameters = n * (1 + np.arange(breakpoints)) / (breakpoints + 1)
+
+			# parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
+			gradient = np.zeros(breakpoints)
+			delta = [*np.identity(breakpoints)]
 			prev_grad = np.array(gradient)
 
 			m, _ = median_slope(winding)
 			self.slopes[key] = m
 
 			for i in range(iterations):
-				present = loss(winding, parameters, m, penalties)
-				gradient = np.array([loss(winding, parameters + d, m, penalties) - present for d in delta])
+				present = multi_loss(winding, parameters, m, penalties)
+				gradient = np.array([multi_loss(winding, parameters + d, m, penalties) - present for d in delta])
 				parameters = parameters - learning_rate * gradient
 
 			if parameters[1] > 0.9 * n:
 				parameters[1] = len(winding)
 
 			self.regressions[key] = parameters
+			self.losses[key] = present
+
+
 
 	def cache_geometry(self, directory, prefix = ''):
 		with open(os.path.join(directory, prefix + 'backbones.pickle'), 'wb') as handle:

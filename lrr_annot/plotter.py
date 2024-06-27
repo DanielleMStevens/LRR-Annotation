@@ -11,8 +11,8 @@ class Plotter:
         self.regressions.update(regressions)
         self.slopes.update(slopes)
 
-    def plot_regressions(self, save = False, directory = ''):
-        for key in self.windings:
+    def plot_regressions(self, save = False, directory = '', progress = True):
+        for key in (tqdm(self.regressions, desc = 'Making plots') if (save and progress) else self.regressions):
             winding = self.windings[key]
             slope = self.slopes[key]
             l, r = self.regressions[key]
