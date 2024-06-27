@@ -69,10 +69,8 @@ def compute_winding(structure, smoothing=20):
 		V[i] -= np.outer(V[i] @ z, z)
 		V[i] = compromise(*V[i])
 
-	Q = np.zeros((len(dZ), 2))
-	for i in range(len(Q)):
-		Q[i] = [(X[i] - Y[i]) @ V[i,0], (X[i] - Y[i]) @ V[i,1]]
-	s, c = Q.T
+	s = np.array([x @ v for x, v in zip(X - Y, V[:,0,:])])
+	c = np.array([x @ w for x, w in zip(X - Y, V[:,1,:])])
 
 	# differentiate the appropriate variables
 	ds = gf1d(s, sigma=1, order=1)
@@ -129,6 +127,16 @@ def median_slope(data, small = 150, big = 250):
 
 
 def loss(winding, params, slope, penalties):
+	"""Computes loss associated with a particular piecewise-linear
+	regression of `winding`.
+	Args:
+		winding (_type_): Cumulative winding number (signal to be regressed)
+		params (_type_): Breakpoint locations
+		slope (_type_): Slope inferred by median-secant-line computation
+		penalties (_type_): Weights allowed deviations in the coiling and non-coiling regions
+	Returns:
+		float: Loss value
+	"""
 	l, r = params
 	l = int(l)
 	r = int(r)
@@ -144,7 +152,17 @@ def loss(winding, params, slope, penalties):
 
 	return penalties[0] * np.sum(pre ** 2) + penalties[1] * np.sum(mid ** 2) + penalties[0] * np.sum(post ** 2)
 
-def compute_regressions(winding, penalties = [1, 1.5], learning_rate = 0.01, iterations = 10000):
+def multi_loss(winding, params, slope, penalties):
+	cost = 0
+	breakpoints = [0] + list(params.astype('int')) + [len(winding)]
+
+	for i, (a, b) in enumerate(zip(breakpoints[:-1], breakpoints[1:])):
+		linear = (i % 2) * slope * (np.arange(a, b) - (a + b - 1) / 2)
+		cost += penalties[i % 2] * np.sum((winding[a:b] - linear - np.mean(winding[a:b])) ** 2)
+
+	return cost
+
+def compute_regression(winding, breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000):
 	"""
 	Computes piecewise-linear regressions (constant - slope = m - constant) over
 	all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
@@ -154,6 +172,8 @@ def compute_regressions(winding, penalties = [1, 1.5], learning_rate = 0.01, ite
 	----------
 	winding: ndarray(n)
 		The winding number at each residue
+	breakpoints: int (optional)
+		How many breakpoints to use
 	penalties: list[float, float] (optional)
 		Two-element list describing the relative penalties, in the loss function, of deviation. 
 		The first component refers to the non-coiling regions; the second to the coiling region.
@@ -171,19 +191,24 @@ def compute_regressions(winding, penalties = [1, 1.5], learning_rate = 0.01, ite
 			Estimated slope at each residue,
 		regression: 
 			Regression parameters
+		loss: float
+			Final loss from the regression
 	}
 	"""
 	n = len(winding)
 
-	parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
-	gradient = np.zeros(2)
-	delta = [*np.identity(2)]
+	# best-guess initialization
+	parameters = n * (1 + np.arange(breakpoints)) / (breakpoints + 1)
+
+	# parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
+	gradient = np.zeros(breakpoints)
+	delta = [*np.identity(breakpoints)]
 
 	m, _ = median_slope(winding)
 
 	for _ in range(iterations):
-		present = loss(winding, parameters, m, penalties)
-		gradient = np.array([loss(winding, parameters + d, m, penalties) - present for d in delta])
+		present = multi_loss(winding, parameters, m, penalties)
+		gradient = np.array([multi_loss(winding, parameters + d, m, penalties) - present for d in delta])
 		parameters = parameters - learning_rate * gradient
 
 	if parameters[1] > 0.9 * n:
@@ -191,7 +216,8 @@ def compute_regressions(winding, penalties = [1, 1.5], learning_rate = 0.01, ite
 
 	return dict(
 		slope=m,
-		regression=parameters
+		regression=parameters,
+		loss=present
 	)
 
 
@@ -205,6 +231,7 @@ class Analyzer:
 		self.windings = {}
 		self.slopes = {}
 		self.regressions = {}
+		self.losses = {}
 
 	def load_structures(self, structures):
 		"""Updates internal dictionary of three-dimensional protein structures,
@@ -215,7 +242,7 @@ class Analyzer:
 		"""
 		self.structures.update(structures)
 
-	def compute_windings(self, smoothing = 20):
+	def compute_windings(self, smoothing=20, progress=True):
 		"""Computes the normal bundle framing and cumulative winding number
 		for each protein structure stored in the `structures` dictionary.
 		The backbone, normal bundle, "flattened" curve (projection to the
@@ -227,8 +254,11 @@ class Analyzer:
 		----------
 		smoothing: int (optional): 
 			Amount of smoothing to apply when computing the backbone curve. Defaults to 20.
+		progress: bool (optional):
+			Whether to show a progress bar (default True)
 		"""
-		for key, structure in self.structures.items():
+		from tqdm import tqdm
+		for key, structure in (tqdm(self.structures.items(), desc = 'Computing windings') if progress else self.structures.items()):
 			res = compute_winding(structure, smoothing=smoothing)
 			self.windings[key] = res["winding"]
 			self.backbones[key] = res["backbone"]
@@ -236,7 +266,7 @@ class Analyzer:
 			self.flattened[key] = res["flattened"]
 			
 
-	def compute_regressions(self, penalties = [1, 1.5], learning_rate = 0.01, iterations = 10000):
+	def compute_regressions(self, penalties=[1, 1.5], breakpoints=2, learning_rate=0.01, iterations=10000, progress=True):
 		"""Computes piecewise-linear regressions (constant - slope = m - constant) over
 		all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
 		of these regressions to the `parameters` and `slopes` dictionaries.
@@ -247,16 +277,22 @@ class Analyzer:
 			Two-element list describing the relative penalties, in the loss function, of deviation. 
 			The first component refers to the non-coiling regions; the second to the coiling region.
 			Defaults to [1, 1.5].
+		breakpoints: int (optional)
+			How many breakpoints to use
 		learning_rate: float (optional)
 			Scalar for gradient descent in parameter optimization. Defaults to 0.01.
 			iterations (int, optional): Iterations of gradient descent. Defaults to 10000.
 		iterations: int (optional)
 			Number of iterations in gradient descent.  Defaults to 10000
+		progress: bool (optional):
+			Whether to show a progress bar (default True)
 		"""
-		for key, winding in self.windings.items():
-			res = compute_regressions(winding, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
+		from tqdm import tqdm
+		for key, winding in (tqdm(self.windings.items(), desc = 'Computing regressions') if progress else self.windings.items()):
+			res = compute_regression(winding, breakpoints=breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
 			self.slopes[key] = res["slope"]
 			self.regressions[key] = res["regression"]
+			self.losses[key] = res["loss"]
 
 	def cache_geometry(self, directory, prefix = ''):
 		with open(os.path.join(directory, prefix + 'backbones.pickle'), 'wb') as handle:

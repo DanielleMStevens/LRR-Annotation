@@ -9,7 +9,7 @@ class Loader:
 	def __init__(self):
 		self.structures = {}
 
-	def load_batch(self, directory, prefix = ''):
+	def load_batch(self, directory, prefix = '', progress=True):
 		"""Loads batch of PDB files from specified directory and stores
 		them in the self.structures dictionary, where they can be looked up
 		by filename. Optionally a 
@@ -21,8 +21,9 @@ class Loader:
 			Defaults to ''.
 		"""
 		from Bio.PDB import PDBParser
+		from tqdm import tqdm
 		parser = PDBParser()
-		for filename in os.listdir(directory):
+		for filename in (tqdm(os.listdir(directory), desc = 'Loading PDBs') if progress else os.listdir(directory)):
 			if filename.endswith('.pdb'):
 				path = os.path.join(directory, filename)
 				key = os.path.splitext(filename)[0]
