@@ -1,4 +1,6 @@
-from .common import *
+import os 
+import pickle
+import numpy as np
 
 """Loads batches of PBD files from disk, extracts backbones, stores them
 in a dictionary, labeled by filename. 
@@ -18,6 +20,7 @@ class Loader:
 			dictionary (deals with conflicting filenames over multiple imports).
 			Defaults to ''.
 		"""
+		from Bio.PDB import PDBParser
 		parser = PDBParser()
 		for filename in os.listdir(directory):
 			if filename.endswith('.pdb'):
@@ -38,6 +41,7 @@ class Loader:
 			dictionary (deals with conflicting filenames over multiple imports).
 			Defaults to ''.
 		"""
+		from Bio.PDB import PDBParser
 		parser = PDBParser()
 		assert filename in os.listdir(directory)
 

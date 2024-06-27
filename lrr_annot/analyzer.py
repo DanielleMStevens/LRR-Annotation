@@ -1,4 +1,6 @@
-from .common import *
+import numpy as np
+import os
+import pickle
 
 def compromise(a, b):
 	"""Given a pair of n-dimensional vectors `a`, `b`, this function
@@ -14,9 +16,81 @@ def compromise(a, b):
 		list: A two-element list of orthonormal vectors
 	"""
 	X = np.array([a,b])
-	u, s, vh = np.linalg.svd(X, full_matrices=False)
+	u, _, vh = np.linalg.svd(X, full_matrices=False)
 	Y = u @ vh
 	return [*Y]
+
+def compute_winding(structure, smoothing=20):
+	"""
+	Computes the normal bundle framing and cumulative winding number
+	for a protein structure
+	
+	each protein structure stored in the `structures` dictionary.
+	The backbone, normal bundle, "flattened" curve (projection to the
+	normal bundle), and cumulative winding number are stored to
+	the respective member variables: `backbones`, `normal_bundles`, `flattened`,
+	and `winding`.
+
+	Parameters
+	----------
+	structure: ndarray(n, 3)
+		Coordinates of the residue sequence in 3D
+	smoothing: int (optional): 
+		Amount of smoothing to apply when computing the backbone curve. Defaults to 20.
+
+	Returns
+	-------
+	{
+		winding: ndarray(n)
+			The winding number at each residue,
+		backbone: ndarray(n, 3)
+			The smoothed backbone structure
+		normal_bundle: ndarray(n, 2, 3)
+			The normal bundle at each residue
+		flattened: ndarray(n, 2)
+			Residues projected onto the normal bundle
+	}
+	"""
+	from scipy.ndimage import gaussian_filter1d as gf1d
+	X = gf1d(structure,  sigma=1, axis=0) # smoothed out structure
+	Y = gf1d(X, sigma=smoothing, axis=0) # backbone
+	dY = gf1d(Y, sigma=1, axis=0, order=1) # tangent of backbone
+	dZ = dY / np.sqrt(np.sum(dY ** 2, axis=1))[:, np.newaxis] # normalized tangent
+
+	# parallel transport along backbone
+	# V[i] is an orthonormal basis for the orthogonal complement of dZ[i]
+	V = np.zeros((len(dZ), 2, 3)) 
+	V[0] = np.random.rand(2, 3)
+	for i, z in enumerate(dZ):
+		if i: V[i] = V[i-1]
+
+		# remove projection onto z, the current tangent vector,
+		# then enforce orthonormality
+		V[i] -= np.outer(V[i] @ z, z)
+		V[i] = compromise(*V[i])
+
+	Q = np.zeros((len(dZ), 2))
+	for i in range(len(Q)):
+		Q[i] = [(X[i] - Y[i]) @ V[i,0], (X[i] - Y[i]) @ V[i,1]]
+	s, c = Q.T
+
+	# differentiate the appropriate variables
+	ds = gf1d(s, sigma=1, order=1)
+	dc = gf1d(c, sigma=1, order=1)
+	r2 = s ** 2 + c ** 2
+
+	# compute discrete integral
+	summand = (c * ds - s * dc) / r2
+	winding = np.cumsum(summand) / (2 * np.pi)
+	winding *= np.sign(winding[-1] - winding[0])
+
+	return dict(
+		winding = winding,
+		backbone=Y,
+		normal_bundle=V,
+		flattened = np.array([s, c]).T
+	)
+
 
 def median_slope(data, small = 150, big = 250):
 	"""Computes the distribution of slopes of secant lines
@@ -53,6 +127,7 @@ def median_slope(data, small = 150, big = 250):
 
 	return a + (np.argmax(scores) / n_bins) * (b - a), scores
 
+
 def loss(winding, params, slope, penalties):
 	l, r = params
 	l = int(l)
@@ -68,6 +143,58 @@ def loss(winding, params, slope, penalties):
 	if len(post): post -= np.mean(post)    
 
 	return penalties[0] * np.sum(pre ** 2) + penalties[1] * np.sum(mid ** 2) + penalties[0] * np.sum(post ** 2)
+
+def compute_regressions(winding, penalties = [1, 1.5], learning_rate = 0.01, iterations = 10000):
+	"""
+	Computes piecewise-linear regressions (constant - slope = m - constant) over
+	all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
+	of these regressions to the `parameters` and `slopes` dictionaries.
+
+	Parameters
+	----------
+	winding: ndarray(n)
+		The winding number at each residue
+	penalties: list[float, float] (optional)
+		Two-element list describing the relative penalties, in the loss function, of deviation. 
+		The first component refers to the non-coiling regions; the second to the coiling region.
+		Defaults to [1, 1.5].
+	learning_rate: float (optional)
+		Scalar for gradient descent in parameter optimization. Defaults to 0.01.
+		iterations (int, optional): Iterations of gradient descent. Defaults to 10000.
+	iterations: int (optional)
+		Number of iterations in gradient descent.  Defaults to 10000
+	
+	Returns
+	-------
+	{
+		slope: ndarray(n)
+			Estimated slope at each residue,
+		regression: 
+			Regression parameters
+	}
+	"""
+	n = len(winding)
+
+	parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
+	gradient = np.zeros(2)
+	delta = [*np.identity(2)]
+
+	m, _ = median_slope(winding)
+
+	for _ in range(iterations):
+		present = loss(winding, parameters, m, penalties)
+		gradient = np.array([loss(winding, parameters + d, m, penalties) - present for d in delta])
+		parameters = parameters - learning_rate * gradient
+
+	if parameters[1] > 0.9 * n:
+		parameters[1] = len(winding)
+
+	return dict(
+		slope=m,
+		regression=parameters
+	)
+
+
 
 class Analyzer:
 	def __init__(self):
@@ -96,84 +223,40 @@ class Analyzer:
 		the respective member variables: `backbones`, `normal_bundles`, `flattened`,
 		and `winding`.
 
-		Args:
-			smoothing (int, optional): Amount of smoothing to apply when computing the
-			backbone curve. Defaults to 20.
+		Parameters
+		----------
+		smoothing: int (optional): 
+			Amount of smoothing to apply when computing the backbone curve. Defaults to 20.
 		"""
 		for key, structure in self.structures.items():
-			X = gaussian_filter(structure, [1, 0]) # smoothed out structure
-			dX = gaussian_filter(X, [1, 0], order = 1) # tangent of structure
-			Y = gaussian_filter(X, [smoothing, 0]) # backbone
-			dY = gaussian_filter(Y, [1, 0], order = 1) # tangent of backbone
-			dZ = dY / np.sqrt(np.sum(dY ** 2, axis = 1))[:, np.newaxis] # normalized tangent
-
-			# parallel transport along backbone
-			# V[i] is an orthonormal basis for the orthogonal complement of dZ[i]
-			V = np.zeros((len(dZ), 2, 3)) 
-			V[0] = np.random.rand(2, 3)
-			for i, z in enumerate(dZ):
-				if i: V[i] = V[i-1]
-
-				# remove projection onto z, the current tangent vector,
-				# then enforce orthonormality
-				V[i] -= np.outer(V[i] @ z, z)
-				V[i] = compromise(*V[i])
-
-			Q = np.zeros((len(dZ), 4))
-			for i in range(len(Q)):
-				Q[i] = [(X[i] - Y[i]) @ V[i,0], (X[i] - Y[i]) @ V[i,1], \
-	    				(X[i] - Y[i]) @ dZ[i], dX[i] @ dZ[i]]
-				
-			s, c, q, dx = Q.T
-
-			# differentiate the appropriate variables
-			ds = gaussian_filter(s, 1, order = 1)
-			dc = gaussian_filter(c, 1, order = 1)
-			dq = gaussian_filter(q, 1, order = 1)
-			r2 = s ** 2 + c ** 2
-
-			# compute discrete integral
-			summand = (c * ds - s * dc) / r2
-			winding = np.cumsum(summand) / (2 * np.pi)
-			winding *= np.sign(winding[-1] - winding[0])
-
-			self.backbones[key] = Y
-			self.normal_bundles[key] = V
-			self.flattened[key] = np.array([s, c])
-			self.windings[key] = winding
+			res = compute_winding(structure, smoothing=smoothing)
+			self.windings[key] = res["winding"]
+			self.backbones[key] = res["backbone"]
+			self.normal_bundles[key] = res["normal_bundle"]
+			self.flattened[key] = res["flattened"]
+			
 
 	def compute_regressions(self, penalties = [1, 1.5], learning_rate = 0.01, iterations = 10000):
 		"""Computes piecewise-linear regressions (constant - slope = m - constant) over
 		all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
 		of these regressions to the `parameters` and `slopes` dictionaries.
 
-		Args:
-			penalties (list, optional): Two-element list describing the relative penalties, in the loss function,
-			of deviation. The first component refers to the non-coiling regions; the second to the coiling region.
+		Parameters
+		----------
+		penalties: list[float, float] (optional)
+			Two-element list describing the relative penalties, in the loss function, of deviation. 
+			The first component refers to the non-coiling regions; the second to the coiling region.
 			Defaults to [1, 1.5].
-			learning_rate (float, optional): Scalar for gradient descent in parameter optimization. Defaults to 0.01.
+		learning_rate: float (optional)
+			Scalar for gradient descent in parameter optimization. Defaults to 0.01.
 			iterations (int, optional): Iterations of gradient descent. Defaults to 10000.
+		iterations: int (optional)
+			Number of iterations in gradient descent.  Defaults to 10000
 		"""
 		for key, winding in self.windings.items():
-			n = len(winding)
-
-			parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
-			gradient = np.zeros(2)
-			delta = [*np.identity(2)]
-			prev_grad = np.array(gradient)
-
-			m, _ = median_slope(winding)
-			self.slopes[key] = m
-
-			for i in range(iterations):
-				present = loss(winding, parameters, m, penalties)
-				gradient = np.array([loss(winding, parameters + d, m, penalties) - present for d in delta])
-				parameters = parameters - learning_rate * gradient
-
-			if parameters[1] > 0.9 * n:
-				parameters[1] = len(winding)
-
-			self.regressions[key] = parameters
+			res = compute_regressions(winding, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
+			self.slopes[key] = res["slope"]
+			self.regressions[key] = res["regression"]
 
 	def cache_geometry(self, directory, prefix = ''):
 		with open(os.path.join(directory, prefix + 'backbones.pickle'), 'wb') as handle:
