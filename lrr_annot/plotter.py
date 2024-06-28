@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-def plot_regression(ax, winding, breakpoints, slope):
+def plot_regression(ax, winding, breakpoints, slope, colors=[]):
     """
     ax: matplotlib axis
         Axis on which to plot the regression
@@ -12,13 +12,22 @@ def plot_regression(ax, winding, breakpoints, slope):
         Residue locations of the breakpoints
     slope: ndarray(n)
 			Estimated slope in each winding segment
+    colors: list of [(r, g, b) * (n_breakpoints+1)] (optional)
+        List of colors to go with each interval
+        If left blank, the default color cycler is used, starting at orange
     """
     boundaries = [0] + breakpoints.tolist() + [len(winding)]
+    n_intervals = len(breakpoints)+1
+    if len(colors) == 0:
+        colors = [f"C{i+1}" for i in range(n_intervals)]
+    elif len(colors) != n_intervals:
+        raise ValueError("Must provide same number of colors as intervals")
+
     ax.plot(winding, c='C0', linewidth=1, zorder=100)
     for i, (a, b) in enumerate(zip(boundaries[:-1], boundaries[1:])):
         linear = (i % 2) * slope * (np.arange(a, b) - (a + b - 1) / 2)
         y = linear + np.mean(winding[a:b])
-        ax.plot(np.arange(a, b), y, c=f"C{i+1}", linestyle='--', linewidth=3)
+        ax.plot(np.arange(a, b), y, c=colors[i], linestyle='--', linewidth=3)
     for b in breakpoints:
         ax.axvline(b, linestyle='--', c='k')
     ax.set_title('Piecewise linear regression on winding number graph')
@@ -62,9 +71,8 @@ def plot_residue_annotations_3d(X, breakpoints, colors=[], fac=10):
         colors = colors[1:] + [colors[0]]
         colors = colors*(1+n_intervals//len(colors))
         colors = colors[0:n_intervals]
-    else:
-        if len(colors) != n_intervals:
-            raise ValueError("Must provide same number of colors as intervals")
+    elif len(colors) != n_intervals:
+        raise ValueError("Must provide same number of colors as intervals")
     
     ## Step 3: Smooth curve and make plot
     t1 = np.linspace(0, 1, X.shape[0])
