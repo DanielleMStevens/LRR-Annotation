@@ -125,44 +125,27 @@ def median_slope(data, small = 150, big = 250):
 
 	return a + (np.argmax(scores) / n_bins) * (b - a), scores
 
-
-def loss(winding, params, slope, penalties):
+def multi_loss(winding, breakpoints, slope, penalties):
 	"""Computes loss associated with a particular piecewise-linear
 	regression of `winding`.
 	Args:
 		winding (_type_): Cumulative winding number (signal to be regressed)
-		params (_type_): Breakpoint locations
+		breakpoints (_type_): Breakpoint locations
 		slope (_type_): Slope inferred by median-secant-line computation
 		penalties (_type_): Weights allowed deviations in the coiling and non-coiling regions
 	Returns:
 		float: Loss value
 	"""
-	l, r = params
-	l = int(l)
-	r = int(r)
-	
-	pre = np.array(winding[:l])
-	pre -= np.mean(pre)
-	
-	mid = winding[l:r] - (slope * (np.arange(l, r)))
-	mid -= np.mean(mid)
-	
-	post = np.array(winding[r:])
-	if len(post): post -= np.mean(post)    
-
-	return penalties[0] * np.sum(pre ** 2) + penalties[1] * np.sum(mid ** 2) + penalties[0] * np.sum(post ** 2)
-
-def multi_loss(winding, params, slope, penalties):
 	cost = 0
-	breakpoints = [0] + list(params.astype('int')) + [len(winding)]
+	boundaries = [0] + list(breakpoints.astype('int')) + [len(winding)]
 
-	for i, (a, b) in enumerate(zip(breakpoints[:-1], breakpoints[1:])):
+	for i, (a, b) in enumerate(zip(boundaries[:-1], boundaries[1:])):
 		linear = (i % 2) * slope * (np.arange(a, b) - (a + b - 1) / 2)
 		cost += penalties[i % 2] * np.sum((winding[a:b] - linear - np.mean(winding[a:b])) ** 2)
 
 	return cost
 
-def compute_regression(winding, breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000):
+def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000):
 	"""
 	Computes piecewise-linear regressions (constant - slope = m - constant) over
 	all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
@@ -172,7 +155,7 @@ def compute_regression(winding, breakpoints=2, penalties=[1, 1.5], learning_rate
 	----------
 	winding: ndarray(n)
 		The winding number at each residue
-	breakpoints: int (optional)
+	n_breakpoints: int (optional)
 		How many breakpoints to use
 	penalties: list[float, float] (optional)
 		Two-element list describing the relative penalties, in the loss function, of deviation. 
@@ -188,9 +171,9 @@ def compute_regression(winding, breakpoints=2, penalties=[1, 1.5], learning_rate
 	-------
 	{
 		slope: ndarray(n)
-			Estimated slope at each residue,
-		regression: 
-			Regression parameters
+			Estimated slope in each winding segment
+		breakpoints: ndarray(int)
+			Residue locations of the breakpoints
 		loss: float
 			Final loss from the regression
 	}
@@ -198,29 +181,26 @@ def compute_regression(winding, breakpoints=2, penalties=[1, 1.5], learning_rate
 	n = len(winding)
 
 	# best-guess initialization
-	parameters = n * (1 + np.arange(breakpoints)) / (breakpoints + 1)
-
-	# parameters = np.array([n // 2, (3 * n) // 4]) # best-guess initialization
-	gradient = np.zeros(breakpoints)
-	delta = [*np.identity(breakpoints)]
+	breakpoints = n * (1 + np.arange(n_breakpoints)) / (n_breakpoints + 1)
+	gradient = np.zeros(n_breakpoints)
+	delta = [*np.identity(n_breakpoints)]
 
 	m, _ = median_slope(winding)
 
 	for _ in range(iterations):
-		present = multi_loss(winding, parameters, m, penalties)
-		gradient = np.array([multi_loss(winding, parameters + d, m, penalties) - present for d in delta])
-		parameters = parameters - learning_rate * gradient
+		present = multi_loss(winding, breakpoints, m, penalties)
+		# Compute a finite difference approximation of the gradient
+		gradient = np.array([multi_loss(winding, breakpoints + d, m, penalties) - present for d in delta])
+		breakpoints = breakpoints - learning_rate * gradient
 
-	if parameters[1] > 0.9 * n:
-		parameters[1] = len(winding)
+	if breakpoints[-1] > 0.9 * n:
+		breakpoints[-1] = len(winding)
 
 	return dict(
 		slope=m,
-		regression=parameters,
+		breakpoints=np.array(breakpoints, dtype=int),
 		loss=present
 	)
-
-
 
 class Analyzer:
 	def __init__(self):
@@ -230,7 +210,7 @@ class Analyzer:
 		self.flattened = {}
 		self.windings = {}
 		self.slopes = {}
-		self.regressions = {}
+		self.breakpoints = {}
 		self.losses = {}
 
 	def load_structures(self, structures):
@@ -268,8 +248,8 @@ class Analyzer:
 
 	def compute_regressions(self, penalties=[1, 1.5], breakpoints=2, learning_rate=0.01, iterations=10000, progress=True):
 		"""Computes piecewise-linear regressions (constant - slope = m - constant) over
-		all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
-		of these regressions to the `parameters` and `slopes` dictionaries.
+		all cumulative winding curves stored in the `winding` dictionary. Writes the breakpoints
+		of these regressions to the `breakpoints` and `slopes` dictionaries.
 
 		Parameters
 		----------
@@ -291,7 +271,7 @@ class Analyzer:
 		for key, winding in (tqdm(self.windings.items(), desc = 'Computing regressions') if progress else self.windings.items()):
 			res = compute_regression(winding, breakpoints=breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
 			self.slopes[key] = res["slope"]
-			self.regressions[key] = res["regression"]
+			self.breakpoints[key] = res["regression"]
 			self.losses[key] = res["loss"]
 
 	def cache_geometry(self, directory, prefix = ''):
