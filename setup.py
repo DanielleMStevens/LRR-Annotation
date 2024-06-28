@@ -18,5 +18,5 @@ setup(
 	url = 'https://github.com/amcerbu/LRR-Annotation/',
 	license = 'MIT',
 	packages = find_packages(where = 'lrr_annot'),
-	install_requires = ['numpy', 'scipy', 'matplotlib', 'biopython', 'jupyter']
+	install_requires = ['numpy', 'scipy', 'matplotlib', 'biopython', 'jupyter', 'tqdm']
 )
