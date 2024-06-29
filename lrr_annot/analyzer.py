@@ -145,7 +145,7 @@ def multi_loss(winding, breakpoints, slope, penalties):
 
 	return cost
 
-def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000):
+def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000, left=0, right =-1):
 	"""
 	Computes piecewise-linear regressions (constant - slope = m - constant) over
 	all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
@@ -180,8 +180,11 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
 	"""
 	n = len(winding)
 
+	if right < 0:
 	# best-guess initialization
-	breakpoints = n * (1 + np.arange(n_breakpoints)) / (n_breakpoints + 1)
+		breakpoints = n * (1 + np.arange(n_breakpoints)) / (n_breakpoints + 1)
+	else:
+		breakpoints = (right - left)* (np.arange(n_breakpoints)) / (n_breakpoints-1) + left
 	gradient = np.zeros(n_breakpoints)
 	delta = [*np.identity(n_breakpoints)]
 
