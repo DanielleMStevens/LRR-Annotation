@@ -1,6 +1,13 @@
+# DS_Store
+.DS_Store
+.ipynb_checkpoints/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+
+# Python packaging
+*.egg-info
 
 # C extensions
 *.so
