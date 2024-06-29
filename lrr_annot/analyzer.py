@@ -145,7 +145,7 @@ def multi_loss(winding, breakpoints, slope, penalties):
 
 	return cost
 
-def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000, left=0, right =-1):
+def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_rate=0.01, iterations=10000, initial_guess=[]):
 	"""
 	Computes piecewise-linear regressions (constant - slope = m - constant) over
 	all cumulative winding curves stored in the `winding` dictionary. Writes the parameters
@@ -166,11 +166,14 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
 		iterations (int, optional): Iterations of gradient descent. Defaults to 10000.
 	iterations: int (optional)
 		Number of iterations in gradient descent.  Defaults to 10000
+	initial_guess: list of float (optional)
+		An initial guess of the breakpoint locations.  If not specified, initial conditions
+		will be taken as equally spaced.
 	
 	Returns
 	-------
 	{
-		slope: ndarray(n)
+		slope: float
 			Estimated slope in each winding segment
 		breakpoints: ndarray(int)
 			Residue locations of the breakpoints
@@ -180,11 +183,11 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
 	"""
 	n = len(winding)
 
-	if right < 0:
-	# best-guess initialization
-		breakpoints = n * (1 + np.arange(n_breakpoints)) / (n_breakpoints + 1)
+	if len(initial_guess) > 0:
+		breakpoints = np.array(initial_guess)
 	else:
-		breakpoints = (right - left)* (np.arange(n_breakpoints)) / (n_breakpoints-1) + left
+		# best-guess initialization
+		breakpoints = n * (1 + np.arange(n_breakpoints)) / (n_breakpoints + 1)
 	gradient = np.zeros(n_breakpoints)
 	delta = [*np.identity(n_breakpoints)]
 
@@ -205,6 +208,32 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
 		loss=present
 	)
 
+def compute_lrr_std(winding, breakpoints, slope):
+	"""
+	Compute the standard deviation of the difference
+	between the linear estimates and the actual winding
+	number over all LRR segments
+
+	Parameters
+	----------
+	winding: ndarray(n)
+		The winding number at each residue
+	breakpoints: ndarray(int)
+		Residue locations of the breakpoints
+	slope: float
+		Estimated slope in each winding segment
+	"""
+	winding_seg = np.array([])
+	y_seg = np.array([])
+	for i in range(0, len(breakpoints), 2):
+		if i+1 < len(breakpoints):
+			[a, b] = breakpoints[i:i+2]
+			winding_seg = np.concatenate((winding_seg, winding[a:b]))
+			linear = slope * (np.arange(a, b) - (a + b - 1) / 2)
+			y = linear + np.mean(winding[a:b])
+			y_seg = np.concatenate((y_seg, y))
+	return np.std(winding_seg-y_seg)
+
 class Analyzer:
 	def __init__(self):
 		self.structures = {}
@@ -215,6 +244,7 @@ class Analyzer:
 		self.slopes = {}
 		self.breakpoints = {}
 		self.losses = {}
+		self.stds = {}
 
 	def load_structures(self, structures):
 		"""Updates internal dictionary of three-dimensional protein structures,
@@ -249,7 +279,7 @@ class Analyzer:
 			self.flattened[key] = res["flattened"]
 			
 
-	def compute_regressions(self, penalties=[1, 1.5], breakpoints=2, learning_rate=0.01, iterations=10000, progress=True):
+	def compute_regressions(self, penalties=[1, 1.5], n_breakpoints=2, learning_rate=0.01, iterations=10000, progress=True):
 		"""Computes piecewise-linear regressions (constant - slope = m - constant) over
 		all cumulative winding curves stored in the `winding` dictionary. Writes the breakpoints
 		of these regressions to the `breakpoints` and `slopes` dictionaries.
@@ -260,7 +290,7 @@ class Analyzer:
 			Two-element list describing the relative penalties, in the loss function, of deviation. 
 			The first component refers to the non-coiling regions; the second to the coiling region.
 			Defaults to [1, 1.5].
-		breakpoints: int (optional)
+		n_breakpoints: int (optional)
 			How many breakpoints to use
 		learning_rate: float (optional)
 			Scalar for gradient descent in parameter optimization. Defaults to 0.01.
@@ -272,10 +302,30 @@ class Analyzer:
 		"""
 		from tqdm import tqdm
 		for key, winding in (tqdm(self.windings.items(), desc = 'Computing regressions') if progress else self.windings.items()):
-			res = compute_regression(winding, breakpoints=breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
+			res = compute_regression(winding, n_breakpoints=n_breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
 			self.slopes[key] = res["slope"]
-			self.breakpoints[key] = res["regression"]
+			self.breakpoints[key] = res["breakpoints"]
 			self.losses[key] = res["loss"]
+
+	def compute_lrr_stds(self, progress=True):
+		"""
+		Compute the standard deviation of the difference between the linear estimates
+		and the actual winding number over all LRR segments, for all cumulative winding 
+		curves stored in the `winding` dictionary and the breakpoints and slopes in the
+		`breakpoints` and `slopes` dictionaries, respectively.  Store the results in 
+		the `stds` dictionary
+
+		Parameters
+		----------
+		progress: bool (optional):
+			Whether to show a progress bar (default True)
+		"""
+		from tqdm import tqdm
+		for key in (tqdm(self.windings, desc = 'Computing stds') if progress else self.windings):
+			winding = self.windings[key]
+			breakpoints = self.breakpoints[key]
+			slope = self.slopes[key]
+			self.stds[key] = compute_lrr_std(winding, breakpoints, slope)
 
 	def cache_geometry(self, directory, prefix = ''):
 		with open(os.path.join(directory, prefix + 'backbones.pickle'), 'wb') as handle:
