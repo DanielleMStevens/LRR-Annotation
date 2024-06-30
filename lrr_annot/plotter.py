@@ -6,12 +6,12 @@ def plot_regression(ax, winding, breakpoints, slope, colors=[]):
     """
     ax: matplotlib axis
         Axis on which to plot the regression
-	winding: ndarray(n)
-		The winding number at each residue
+    winding: ndarray(n)
+        The winding number at each residue
     breakpoints: ndarray(int)
         Residue locations of the breakpoints
     slope: ndarray(n)
-			Estimated slope in each winding segment
+            Estimated slope in each winding segment
     colors: list of [(r, g, b) * (n_breakpoints+1)] (optional)
         List of colors to go with each interval
         If left blank, the default color cycler is used, starting at orange
