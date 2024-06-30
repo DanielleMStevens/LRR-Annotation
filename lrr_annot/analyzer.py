@@ -94,6 +94,38 @@ def compute_winding(structure, smoothing=20):
     )
 
 
+######################################################
+##             B FACTOR PERIOD LOCATIONS            ##
+######################################################
+def compute_bfactor_periods(bfactor, period=25):
+    """
+    Given the b-factor, or the displacement of the atoms
+    from their mean, compute locations of the period boundaries.
+    This serves as a baseline for other periodicity analysis
+    techniques
+    
+    Parameters
+    ----------
+    bfactor: ndarray(N)
+        The b-factor at each residue
+	period: float
+        Approximate period of each residue, used for tuning
+        the bandpass filter
+	
+	Returns
+    -------
+    locations: list of int
+        Locations of periods
+    """
+    ## Step 1: Bandpass filter the b factor to hone in on periodicities
+    from scipy import signal
+    sos = signal.butter(10, [0.5/period, 2/period], 'bandpass', output='sos')
+    bff = signal.sosfiltfilt(sos, bfactor)
+    ## Step 2: Find and return all local maxes
+    idx = np.arange(1, bff.size-1)
+    idx = idx[(bff[idx] > bff[idx-1])*(bff[idx] > bff[idx+1])]
+    return idx
+
 
 ######################################################
 ##          LAPLACIAN CIRCULAR COORDINATES          ##
