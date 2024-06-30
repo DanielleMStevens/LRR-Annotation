@@ -475,16 +475,16 @@ def compute_lrr_discrepancy(winding, locs, a, b):
     locs: list of int
         Period boundary locations
     a: int
-        Left end of LRR domain, inclusive
+        Left endpoint of LRR region, inclusive
     b: int
-        One beyond right end of LRR domain
+        One beyond right endpoint of LRR region
     
     Returns
     -------
     discrepancy: float
         Root mean discrepancy over all period locations
     """
-    locs = np.array(locs[a:b], dtype=int)
+    locs = np.array([l for l in locs if l >= a and l < b], dtype=int)
     lrr_heights = winding[locs]
 
     k = len(lrr_heights)
