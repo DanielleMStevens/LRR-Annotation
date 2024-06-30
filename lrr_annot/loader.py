@@ -8,6 +8,7 @@ in a dictionary, labeled by filename.
 class Loader:
     def __init__(self):
         self.structures = {}
+        self.bfactors = {}
 
     def load_batch(self, directory, prefix = '', progress=True):
         """Loads batch of PDB files from specified directory and stores
@@ -51,6 +52,10 @@ class Loader:
             key = os.path.splitext(filename)[0]
             chain = next(parser.get_structure(key, path).get_chains())
             self.structures[prefix + key] = np.array([np.array(list(residue["CA"].get_vector())) for residue in chain.get_residues()])    
+            try:
+                self.bfactors[prefix + key] = np.array([residue["CA"].get_bfactor() for residue in chain.get_residues()])
+            except:
+                print("Unable to compute bfactor for", filename)
 
     def cache(self, directory, prefix = ''):
         """Caches imported structure to directory
