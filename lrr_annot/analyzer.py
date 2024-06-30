@@ -636,7 +636,7 @@ class Analyzer:
             Whether to show a progress bar (default True)
         """
         from tqdm import tqdm
-        for key in (tqdm(self.structures, desc = 'Computing regressions') if progress else self.windings.items()):
+        for key in (tqdm(self.structures, desc = 'Computing Laplacian windings') if progress else self.windings.items()):
             structure = self.structures[key]
             [a, b] = self.lrr_endpoints[key]
             theta = compute_laplacian_circular_coords(structure[a:b+period-1, :], period=period)["theta"]
