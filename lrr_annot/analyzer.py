@@ -447,6 +447,7 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
         # Compute a finite difference approximation of the gradient
         gradient = np.array([multi_loss(winding, breakpoints + d, m, penalties) - present for d in delta])
         breakpoints = breakpoints - learning_rate * gradient
+        breakpoints = np.sort(breakpoints) # Safeguard
 
     if breakpoints[-1] > 0.9 * n:
         breakpoints[-1] = len(winding)
@@ -623,7 +624,7 @@ class Analyzer:
             self.slopes[key] = res["slope"]
             self.breakpoints[key] = res["breakpoints"]
             self.losses[key] = res["loss"]
-            self.lrr_endpoints = [a, b]
+            self.lrr_endpoints[key] = [a, b]
             
     def compute_lrr_windings_laplacian(self, period=25, progress=True):
         """
