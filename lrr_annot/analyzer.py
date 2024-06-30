@@ -458,7 +458,7 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
 ##              STATISTICS ON RESULTS               ##
 ######################################################
 
-def compute_lrr_discrepancy(winding, locs, a, b):
+def compute_lrr_discrepancy_arithmetic(winding, locs, a, b):
     """
     Compute the discrepancy of a winding number when assuming
     certain period boundary locations
@@ -491,6 +491,35 @@ def compute_lrr_discrepancy(winding, locs, a, b):
     projected = diff * v + (z @ u) / (u @ u) * u
 
     return np.sqrt(np.mean((projected - lrr_heights) ** 2))
+
+
+def compute_lrr_discrepancy(winding, locs, a, b):
+    """
+    Compute the discrepancy of a winding number when assuming
+    certain period boundary locations
+    
+    Parameters
+    ----------
+    winding: ndarray(n)
+        The winding number at each residue]
+    locs: list of int
+        Period boundary locations
+    a: int
+        Left endpoint of LRR region, inclusive
+    b: int
+        One beyond right endpoint of LRR region
+    
+    Returns
+    -------
+    discrepancy: float
+        Root mean discrepancy over all period locations
+    """
+    locs = np.array([l for l in locs if l >= a and l < b], dtype=int)
+    lrr_heights = winding[locs]
+
+    k = len(lrr_heights)
+    return np.sqrt(np.mean((lrr_heights[1:] - lrr_heights[:-1] - 1) ** 2))
+
 
 def compute_lrr_std(winding, breakpoints, slope):
     """
