@@ -58,7 +58,7 @@ def compute_winding(structure, smoothing=20):
     from scipy.ndimage import gaussian_filter1d as gf1d
     X = gf1d(structure,  sigma=1, axis=0) # smoothed out structure
     Y = gf1d(X, sigma=smoothing, axis=0) # backbone
-    dY = gf1d(Y, sigma=1, axis=0, order=1) # tangent of backbone
+    dY = gf1d(X, sigma=smoothing, axis=0, order=1) # tangent of backbone
     dZ = dY / np.sqrt(np.sum(dY ** 2, axis=1))[:, np.newaxis] # normalized tangent
 
     # parallel transport along backbone
@@ -76,13 +76,8 @@ def compute_winding(structure, smoothing=20):
     s = np.array([x @ v for x, v in zip(X - Y, V[:,0,:])])
     c = np.array([x @ w for x, w in zip(X - Y, V[:,1,:])])
 
-    # differentiate the appropriate variables
-    ds = gf1d(s, sigma=1, order=1)
-    dc = gf1d(c, sigma=1, order=1)
-    r2 = s ** 2 + c ** 2
+    summand = np.arctan((c[:-1] * s[1:] - s[:-1] * c[1:]) / (s[:-1] * s[1:] + c[:-1] * c[1:]))
 
-    # compute discrete integral
-    summand = (c * ds - s * dc) / r2
     winding = np.cumsum(summand) / (2 * np.pi)
     winding *= np.sign(winding[-1] - winding[0])
 
