@@ -108,11 +108,11 @@ def compute_bfactor_periods(bfactor, period=25):
     ----------
     bfactor: ndarray(N)
         The b-factor at each residue
-	period: float
+    period: float
         Approximate period of each residue, used for tuning
         the bandpass filter
-	
-	Returns
+    
+    Returns
     -------
     locations: list of int
         Locations of periods
@@ -261,8 +261,8 @@ def get_most_circular_pair(v, period, hop=10):
         Approximate period
     hop: int
         Hop length between blocks in which circularity is tested
-	
-	Returns
+    
+    Returns
     -------
     scores: ndarray(n-period)
         Scores of each pair of eigenvalues
@@ -292,7 +292,7 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
     sigma: float (optional)
         Amount by which to smooth curve when computing velocity.
         Default 1
-	period: int (optional)
+    period: int (optional)
         The amount by which to do a sliding window
     kappa: float (optional)
         Nearest neighbor proportion to take when computing graph Laplacian
@@ -300,7 +300,7 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
         If kappa < 1 it is the fraction of mutual neighbors to consider
         Otherwise kappa is the number of mutual neighbors to consider
         Default 50
-	
+    
     Returns
     -------    
     {
@@ -312,9 +312,9 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
             Eigenvectors of graph Laplacian
         theta: ndarray(n-period+1)
             Estimated circular coordinates
-		idx: int
+        idx: int
             Index in v of the first pair of eigenvector to use
-	}
+    }
     """
     from scipy.ndimage import gaussian_filter1d as gf1d
     X = gf1d(structure, sigma=sigma, order=1, axis=0) # smoothed out structure
@@ -387,8 +387,10 @@ def multi_loss(winding, breakpoints, slope, penalties):
     boundaries = [0] + list(breakpoints.astype('int')) + [len(winding)]
 
     for i, (a, b) in enumerate(zip(boundaries[:-1], boundaries[1:])):
-        linear = (i % 2) * slope * (np.arange(a, b) - (a + b - 1) / 2)
-        cost += penalties[i % 2] * np.sum((winding[a:b] - linear - np.mean(winding[a:b])) ** 2)
+        b = min(b, winding.size)
+        if b > a:
+            linear = (i % 2) * slope * (np.arange(a, b) - (a + b - 1) / 2)
+            cost += penalties[i % 2] * np.sum((winding[a:b] - linear - np.mean(winding[a:b])) ** 2)
 
     return cost
 
@@ -455,6 +457,45 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
         loss=present
     )
 
+
+######################################################
+##              STATISTICS ON RESULTS               ##
+######################################################
+
+def compute_lrr_discrepancy(winding, locs, a, b):
+    """
+    Compute the discrepancy of a winding number when assuming
+    certain period boundary locations
+    
+    Parameters
+    ----------
+    winding: ndarray(n)
+        The winding number at each residue]
+    locs: list of int
+        Period boundary locations
+    a: int
+        Left end of LRR domain, inclusive
+    b: int
+        One beyond right end of LRR domain
+    
+    Returns
+    -------
+    discrepancy: float
+        Root mean discrepancy over all period locations
+    """
+    locs = np.array(locs[a:b], dtype=int)
+    lrr_heights = winding[locs]
+
+    k = len(lrr_heights)
+    u = 1 + np.zeros(k)
+    v = np.arange(0.0, k)
+    v -= (u @ v) / (u @ u) * u
+    z = (lrr_heights @ u) / (u @ u) * u + (lrr_heights @ v) / (v @ v) * v
+    diff = np.sign(np.mean(z[1:] - z[:-1]))
+    projected = diff * v + (z @ u) / (u @ u) * u
+
+    return np.sqrt(np.mean((projected - lrr_heights) ** 2))
+
 def compute_lrr_std(winding, breakpoints, slope):
     """
     Compute the standard deviation of the difference
@@ -481,15 +522,24 @@ def compute_lrr_std(winding, breakpoints, slope):
             y_seg = np.concatenate((y_seg, y))
     return np.std(winding_seg-y_seg)
 
+
+
+######################################################
+##                 BATCH PROCESSOR                  ##
+######################################################
+
 class Analyzer:
     def __init__(self):
         self.structures = {}
+        self.bfactors = {}
         self.backbones = {}
         self.normal_bundles = {}
         self.flattened = {}
         self.windings = {}
         self.slopes = {}
         self.breakpoints = {}
+        self.lrr_endpoints = {}
+        self.lrr_windings_laplacian = {}
         self.losses = {}
         self.stds = {}
 
@@ -501,6 +551,15 @@ class Analyzer:
             structures (dict): Dictionary of protein structures
         """
         self.structures.update(structures)
+    
+    def load_bfactors(self, bfactors):
+        """Updates internal dictionary of b-factors,
+        loaded, e.g., by a Loader object.
+
+        Args:
+            structures (dict): Dictionary of b-factors
+        """
+        self.bfactors.update(bfactors)
 
     def compute_windings(self, smoothing=20, progress=True):
         """Computes the normal bundle framing and cumulative winding number
@@ -526,9 +585,11 @@ class Analyzer:
             self.flattened[key] = res["flattened"]
             
 
-    def compute_regressions(self, penalties=[1, 1.5], n_breakpoints=2, learning_rate=0.01, iterations=10000, progress=True):
+    def compute_regressions(self, penalties=[1, 1.5], learning_rate=0.01, iterations=10000, std_cutoff=1, progress=True):
         """Computes piecewise-linear regressions (constant - slope = m - constant) over
-        all cumulative winding curves stored in the `winding` dictionary. Writes the breakpoints
+        all cumulative winding curves stored in the `winding` dictionary. 
+        Start by assuming 2 breakpoints, and then if the standard deviation exceeds
+        Writes the breakpoints
         of these regressions to the `breakpoints` and `slopes` dictionaries.
 
         Parameters
@@ -537,42 +598,50 @@ class Analyzer:
             Two-element list describing the relative penalties, in the loss function, of deviation. 
             The first component refers to the non-coiling regions; the second to the coiling region.
             Defaults to [1, 1.5].
-        n_breakpoints: int (optional)
-            How many breakpoints to use
         learning_rate: float (optional)
             Scalar for gradient descent in parameter optimization. Defaults to 0.01.
             iterations (int, optional): Iterations of gradient descent. Defaults to 10000.
         iterations: int (optional)
             Number of iterations in gradient descent.  Defaults to 10000
+        std_cutoff: float (optional)
+            The standard deviation amount beyond which to subdivide LRR region    
         progress: bool (optional):
             Whether to show a progress bar (default True)
         """
         from tqdm import tqdm
         for key, winding in (tqdm(self.windings.items(), desc = 'Computing regressions') if progress else self.windings.items()):
-            res = compute_regression(winding, n_breakpoints=n_breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
+            ## Step 1: Compute breakpoints
+            res = compute_regression(winding, n_breakpoints=2, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
+            std = compute_lrr_std(winding, res["breakpoints"], res["slope"])
+            self.stds[key] = std
+            [a, b] = res["breakpoints"]
+            if std > std_cutoff:
+                breakpoints = [a, a + (b-a)/2, a + (b-a)/2 + 1, b]
+                res = compute_regression(winding, n_breakpoints=4, initial_guess=breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
+                a = res["breakpoints"][0]
+                b = res["breakpoints"][-1]
             self.slopes[key] = res["slope"]
             self.breakpoints[key] = res["breakpoints"]
             self.losses[key] = res["loss"]
-
-    def compute_lrr_stds(self, progress=True):
+            self.lrr_endpoints = [a, b]
+            
+    def compute_lrr_windings_laplacian(self, period=25, progress=True):
         """
-        Compute the standard deviation of the difference between the linear estimates
-        and the actual winding number over all LRR segments, for all cumulative winding 
-        curves stored in the `winding` dictionary and the breakpoints and slopes in the
-        `breakpoints` and `slopes` dictionaries, respectively.  Store the results in 
-        the `stds` dictionary
-
         Parameters
-        ----------
+        ---------- 
+        period: int
+            Approximate period of each winding
         progress: bool (optional):
             Whether to show a progress bar (default True)
         """
         from tqdm import tqdm
-        for key in (tqdm(self.windings, desc = 'Computing stds') if progress else self.windings):
-            winding = self.windings[key]
-            breakpoints = self.breakpoints[key]
-            slope = self.slopes[key]
-            self.stds[key] = compute_lrr_std(winding, breakpoints, slope)
+        for key in (tqdm(self.structures, desc = 'Computing regressions') if progress else self.windings.items()):
+            structure = self.structures[key]
+            [a, b] = self.lrr_endpoints[key]
+            theta = compute_laplacian_circular_coords(structure[a:b+period-1, :], period=period)["theta"]
+            if theta.size < b-a: # Zeropad if LRR was too close to the end
+                theta = np.pad(theta, (0, b-a-theta.size))
+            self.lrr_windings_laplacian[key] = theta
 
     def cache_geometry(self, directory, prefix = ''):
         with open(os.path.join(directory, prefix + 'backbones.pickle'), 'wb') as handle:
