@@ -444,8 +444,8 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
         breakpoints = breakpoints - learning_rate * gradient
         breakpoints = np.sort(breakpoints) # Safeguard
 
-    if breakpoints[-1] > 0.9 * n:
-        breakpoints[-1] = len(winding)
+    # if breakpoints[-1] > 0.9 * n:
+    #     breakpoints[-1] = len(winding)
 
     return dict(
         slope=m,
@@ -518,7 +518,7 @@ def compute_lrr_discrepancy(winding, locs, a, b):
     lrr_heights = winding[locs]
 
     k = len(lrr_heights)
-    return np.sqrt(np.mean((lrr_heights[1:] - lrr_heights[:-1] - 1) ** 2))
+    return np.sqrt(np.sum((lrr_heights[1:] - lrr_heights[:-1] - 1) ** 2))
 
 
 def compute_lrr_std(winding, breakpoints, slope):
