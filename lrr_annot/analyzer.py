@@ -212,6 +212,11 @@ def sliding_window(D, win):
         Distance matrix
     win: int
         Sliding window length
+
+    Returns
+    -------
+    ndarray(N-win+1, N-win+1)
+        Sliding window distance matrix
     """
     N = D.shape[0]
     D_stack = np.zeros((N-win+1, N-win+1))
@@ -288,7 +293,9 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
         Amount by which to smooth curve when computing velocity.
         Default 1
     period: int (optional)
-        The amount by which to do a sliding window
+        The amount by which to do a sliding window, or roughly the expected
+        period of each solenoidal region
+        Default 25
     kappa: float (optional)
         Nearest neighbor proportion to take when computing graph Laplacian
         If kappa = 0, take all neighbors
@@ -317,9 +324,8 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
     D = sliding_window(D, period)
     B = csm_to_binary_mutual(D, kappa)
     v = get_unweighted_laplacian_eigs_dense(1-B)
-    #scores = get_most_circular_pair(v[:, 0:20], period)
-    #idx = np.argmax(scores)
-    idx = 0
+    scores = get_most_circular_pair(v[:, 0:3], period)
+    idx = np.argmax(scores)
     theta = np.arctan2(v[:, idx+1], v[:, idx])
     theta = np.unwrap(theta)/(2*np.pi)
     if theta[-1] < 0:
@@ -327,18 +333,52 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
     return dict(D=D, B=B, v=v, theta=theta, idx=idx)
 
 
+def compute_lrr_winding_laplacian(structure, breakpoints, period=25):
+    """
+    Compute LRR windings of a structure within each LRR region, 
+    as determined by breakpoints
+
+    Parameters
+    ---------- 
+    structure: ndarray(n, 3)
+        Coordinates of the residue sequence in 3D
+    breakpoints: ndarray(int)
+        Residue locations of the breakpoints
+    period: int (optional)
+        Approximate period of each winding
+        Default 25
+    
+    Returns
+    -------
+    lwinding: ndarray(n)
+        Winding number in annotation regions
+    """
+    n = structure.shape[0]
+    lwinding = np.zeros(n)
+    last_theta = 0
+    a = breakpoints[0]
+    b = breakpoints[-1]
+    res = compute_laplacian_circular_coords(structure[a:b+period-1, :], period=period)
+    theta = res["theta"] + last_theta
+    last_theta = theta[-1]
+    if theta.size < b-a: # Pad if too close to the end
+        theta = np.concatenate((theta, (b-a-theta.size)*[last_theta]))
+    lwinding[a:b] = theta
+    lwinding[b:] = last_theta
+    return lwinding
+
 
 ######################################################
 ##                REGION ANNOTATION                ##
 ######################################################
 
-def median_slope(data, small = 150, big = 250):
+def median_slope(data, small = 100, big = 250):
     """Computes the distribution of slopes of secant lines
     over a data curve (e.g. cumulative winding number)
 
     Args:
         data (Numpy array): Curve on which to compute slopes of secant lines
-        small (int): Lower bound for run. Defaults to 150.
+        small (int): Lower bound for run. Defaults to 100.
         big (int): Upper bound for run. Defaults to 250. 
 
     Returns:
@@ -442,7 +482,9 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
         # Compute a finite difference approximation of the gradient
         gradient = np.array([multi_loss(winding, breakpoints + d, m, penalties) - present for d in delta])
         breakpoints = breakpoints - learning_rate * gradient
-        breakpoints = np.sort(breakpoints) # Safeguard
+        # Safeguards
+        breakpoints[breakpoints > winding.size] = winding.size
+        breakpoints = np.sort(breakpoints)
 
     # if breakpoints[-1] > 0.9 * n:
     #     breakpoints[-1] = len(winding)
@@ -516,8 +558,6 @@ def compute_lrr_discrepancy(winding, locs, a, b):
     """
     locs = np.array([l for l in locs if l >= a and l < b], dtype=int)
     lrr_heights = winding[locs]
-
-    k = len(lrr_heights)
     return np.sqrt(np.sum((lrr_heights[1:] - lrr_heights[:-1] - 1) ** 2))
 
 
@@ -563,8 +603,7 @@ class Analyzer:
         self.windings = {}
         self.slopes = {}
         self.breakpoints = {}
-        self.lrr_endpoints = {}
-        self.lrr_windings_laplacian = {}
+        self.lwindings = {}
         self.losses = {}
         self.stds = {}
 
@@ -643,12 +682,9 @@ class Analyzer:
             if std > std_cutoff:
                 breakpoints = [a, a + (b-a)/2, a + (b-a)/2 + 1, b]
                 res = compute_regression(winding, n_breakpoints=4, initial_guess=breakpoints, penalties=penalties, learning_rate=learning_rate, iterations=iterations)
-                a = res["breakpoints"][0]
-                b = res["breakpoints"][-1]
             self.slopes[key] = res["slope"]
             self.breakpoints[key] = res["breakpoints"]
             self.losses[key] = res["loss"]
-            self.lrr_endpoints[key] = [a, b]
             
     def compute_lrr_windings_laplacian(self, period=25, progress=True):
         """
@@ -661,12 +697,7 @@ class Analyzer:
         """
         from tqdm import tqdm
         for key in (tqdm(self.structures, desc = 'Computing Laplacian windings') if progress else self.windings.items()):
-            structure = self.structures[key]
-            [a, b] = self.lrr_endpoints[key]
-            theta = compute_laplacian_circular_coords(structure[a:b+period-1, :], period=period)["theta"]
-            if theta.size < b-a: # Zeropad if LRR was too close to the end
-                theta = np.pad(theta, (0, b-a-theta.size))
-            self.lrr_windings_laplacian[key] = theta
+            self.lwindings[key] = compute_lrr_winding_laplacian(self.structures[key], self.breakpoints[key], period=period)
 
     def cache_geometry(self, directory, prefix = ''):
         with open(os.path.join(directory, prefix + 'backbones.pickle'), 'wb') as handle:
