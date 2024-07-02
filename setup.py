@@ -7,9 +7,18 @@ from setuptools import setup, find_packages
 with open('README.md') as f:
 	long_description = f.read()
 
+long_description = '''
+# geom_lrr
+
+Geometric methods for annotating solenoidal domains in protein structures. 
+
+Example usage of the package can be found at the accompanying 
+[GitHub repo](https://github.com/amcerbu/LRR-Annotation/).
+'''
+
 setup(
 	name = 'geom_lrr',
-	version = 1.0,
+	version = 1.01,
 	description = 'Protein domain annotation tool',
 	long_description = long_description,
 	long_description_content_type = 'text/markdown',
