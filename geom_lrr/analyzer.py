@@ -324,8 +324,12 @@ def compute_laplacian_circular_coords(structure, sigma=1, period=25, kappa=50):
     D = sliding_window(D, period)
     B = csm_to_binary_mutual(D, kappa)
     v = get_unweighted_laplacian_eigs_dense(1-B)
-    scores = get_most_circular_pair(v[:, 0:3], period)
-    idx = np.argmax(scores)
+    idx = 0
+    try:
+        scores = get_most_circular_pair(v[:, 0:3], period)
+        idx = np.argmax(scores)
+    except:
+        pass
     theta = np.arctan2(v[:, idx+1], v[:, idx])
     theta = np.unwrap(theta)/(2*np.pi)
     if theta[-1] < 0:
