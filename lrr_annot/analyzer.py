@@ -495,6 +495,58 @@ def compute_regression(winding, n_breakpoints=2, penalties=[1, 1.5], learning_ra
         loss=present
     )
 
+def compute_split_coil(winding, learning_rate=0.001, epochs=1000, batch_size=32):
+    # Initialize parameters
+    t0 = len(winding) // 2  # Initial guess for the transition point
+    n = len(winding)
+    t = np.arange(n)
+    
+    def piecewise_function(t, t0, m0, m1):
+        left_segment = m0 * t[t <= t0]
+        right_segment = m0 * t0 + m1 * (t[t > t0] - t0)
+        return np.concatenate([left_segment, right_segment])
+    
+    def compute_loss(winding, t, t0, m0, m1):
+        predictions = piecewise_function(t, t0, m0, m1)
+        return np.sum((winding - predictions) ** 2)
+    
+    def compute_gradients(winding, t, t0, m0, m1):
+        predictions = piecewise_function(t, t0, m0, m1)
+        residuals = predictions - winding
+        
+        gradient_m0 = np.sum(residuals * np.where(t <= t0, t, t0))
+        gradient_m1 = np.sum(residuals * np.where(t > t0, t - t0, 0))
+        gradient_t0 = np.sum(residuals * ((m1 - m0) * np.where(t > t0, 1, 0)))
+        
+        return gradient_m0, gradient_m1, gradient_t0
+    
+    # Adaptive learning rate
+    base_lr = learning_rate
+    for epoch in range(epochs):
+        # Compute median slopes for left and right segments
+        m0, _ = median_slope(winding[:int(t0) + 1])
+        m1, _ = median_slope(winding[int(t0) + 1:])
+        
+        # Compute gradients
+        gradient_m0, gradient_m1, gradient_t0 = compute_gradients(winding, t, t0, m0, m1)
+        
+        # Update parameters
+        t0 -= learning_rate * gradient_t0 / n
+        t0 = np.clip(t0, 1, n-2)  # Ensure t0 remains within valid range
+        
+        # Adjust learning rate
+        if epoch % 100 == 0:
+            learning_rate = base_lr / (1 + epoch / 100)
+        
+        # Compute and print loss for monitoring
+        loss = compute_loss(winding, t, t0, m0, m1)
+        if epoch % 100 == 0:
+            print(f'Epoch {epoch}, Loss: {loss:.4f}, t0: {t0:.2f}, m0: {m0:.4f}, m1: {m1:.4f}')
+    
+    return m0, m1, t0
+
+
+
 
 ######################################################
 ##              STATISTICS ON RESULTS               ##
