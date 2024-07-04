@@ -111,7 +111,7 @@ class Plotter:
         from tqdm import tqdm
         for key in (tqdm(self.regressions, desc = 'Making plots') if (save and progress) else self.regressions):
             plt.clf()
-            plot_regression(plt.gca(), self.regressions[key], self.windings[key], self.slope[key])
+            plot_regression(plt.gca(), self.regressions[key], self.windings[key], self.slopes[key])
         if save:
             plt.savefig(os.path.join(directory, key + '.pdf'))
             plt.close()
