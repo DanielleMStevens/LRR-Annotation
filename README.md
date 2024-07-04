@@ -2,7 +2,12 @@
 
 Tools for automatic annotation of leucine-rich repeat domains in protein structures. 
 
-To use, make a new virtual / Conda environment and call:
+Our code is available as a `pip` package on PyPI: you can either install it
+with
+```
+pip install geom-lrr
+```
+or clone the repository and install in-place with
 ```
 pip install -e .
 ```
